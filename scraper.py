@@ -1,6 +1,7 @@
 import csv
-
-
+import networkx as nx
+import os
+from neat import nn, population, statistics
 
 
 class season(object):
@@ -9,12 +10,9 @@ class season(object):
     """
     def __init__(self,path):
             self.path = path
-            #self.season = season
-            #self.league = league
 
             self.games = {}
             self.teams = []
-            self.header = []
 
     def read_season(self):
         with open(self.path,mode='r') as data:
@@ -31,6 +29,201 @@ class season(object):
                 self.teams.append(self.games[gamen]['HomeTeam'])
 
             self.teams = list(set(self.teams))
-r = season('./seasons/2011-12/E0.csv')
-r.read_season()
+
+
+
+class network(object):
+    """
+    takes a season, makes a netowrk
+    """
+    def __init__(self,season):
+        self.G = nx.DiGraph()
+        self.season = season
+        for team in season.teams:
+            self.G.add_node(team)
+
+        self.current_game = 0
+    def update_graph(self):
+        """
+        takes one game from the season to update the graph
+        """
+        if self.current_game == len(self.season.games)-1:
+            #print "All games addedd to graph"
+            return -1
+
+        game = self.season.games[self.current_game]
+        ht = game['HomeTeam']
+        at = game['AwayTeam']
+        
+        htg = int(game['FTHG'])
+        atg = int(game['FTAG'])
+
+        if htg > atg:
+            self.G.add_edge(at,ht,weight=1.)
+
+        elif htg < atg:
+            self.G.add_edge(ht,at,weight=1.)
+
+        
+        else:
+            self.G.add_edge(ht,at,weight=1./3)
+            self.G.add_edge(at,ht,weight=1./3)
+
+        self.current_game +=1
+
+    def make_graph_to(self,l=0.5):
+        to = int(round(len(self.season.games)*l))
+
+        for _ in xrange(to):
+           self.update_graph()
+
+train_years = ['2008-09','2009-10','2010-11','2011-12','2012-13','2013-14','2015-16']
+
+
+
+
+
+def bet_game(net,g,s,ranks,fit):
+    game = s.games[g.current_game]
+    ht = game['HomeTeam']
+    at = game['AwayTeam']
+    #print game['LBH']
+    hto = float(game['BbMxH'])
+    ato = float(game['BbMxA'])
+    do = float(game['BbMxD'])
+
+    odds = [hto,ato,do]
+    htrank = ranks[ht]
+    atrank = ranks[at]
+    inputs = [htrank,atrank,hto,ato,do]
+    output = net.serial_activate(inputs)[0]
+    #bet = output.index(max(output)) #0 = home_win, 1 = away_win, 2 = draw, 3 = dont bet
+
+    if output >=0 and output < 0.25:
+        bet = 0
+    elif output >=0.25 and output < 0.5:
+        bet = 1
+    elif output >=0.5 and output< 0.75:
+        bet = 2
+    else:
+        bet = 3
+    
+    #print output
+    htg = int(game['FTHG'])
+    atg = int(game['FTAG'])
+
+   
+    if htg > atg:
+        outcome = 0
+
+    elif htg < atg:
+        outcome = 1
+    else:
+        outcome = 2
+
+   # print bet,outcome
+    if outcome == bet:
+        fit += 1*(odds[outcome]-1.)
+    
+    elif bet ==3:
+        fit = fit
+    else:
+        fit -= 1
+    return fit
+
+
+
+
+
+
+def eval_fitness(genomes,league='/SP1.csv'):
+    for ge in genomes:
+        net = nn.create_feed_forward_phenotype(ge)
+        fit = 100
+        for year in train_years:
+            s = season('./seasons/'+year+league)
+            s.read_season()
+            g = network(s)
+            g.make_graph_to()
+            ranks = nx.pagerank(g.G)
+            while True:
+                fit = bet_game(net,g,s,ranks,fit)
+                ''' to_bet = g.current_game
+                game = s.games[to_bet]
+                # print game
+                ht = game['HomeTeam']
+                at = game['AwayTeam']
+                #print game['LBH']
+                hto = float(game['BbMxH'])
+                ato = float(game['BbMxA'])
+                do = float(game['BbMxD'])
+
+                odds = [hto,ato,do]
+                htrank = ranks[ht]
+                atrank = ranks[at]
+                inputs = [htrank,atrank,hto,ato,do]
+                output = net.serial_activate(inputs)[0]
+                #bet = output.index(max(output)) #0 = home_win, 1 = away_win, 2 = draw, 3 = dont bet
+
+                if output >=0 and output < 0.25:
+                    bet = 0
+                elif output >=0.25 and output < 0.5:
+                    bet = 1
+                elif output >=0.5 and output< 0.75:
+                    bet = 2
+                else:
+                    bet = 3
+                
+                #print output
+                htg = int(game['FTHG'])
+                atg = int(game['FTAG'])
+
+               
+                if htg > atg:
+                    outcome = 0
+
+                elif htg < atg:
+                    outcome = 1
+                else:
+                    outcome = 2
+
+               # print bet,outcome
+                if outcome == bet:
+                    fit += 1*(odds[outcome]-1.)
+                
+                elif bet ==3:
+                    fit = fit
+                else:
+                    fit -= 1'''
+                x =  g.update_graph() 
+                  
+                if x == -1:
+                    break
+                
+                ranks = nx.pagerank(g.G)
+        ge.fitness = fit  
+        print ge.fitness
+
+
+
+pop = population.Population('conf')
+
+pop.run(eval_fitness, 200)
+statistics.save_stats(pop.statistics)
+statistics.save_species_count(pop.statistics)
+statistics.save_species_fitness(pop.statistics)
+
+
+to_test = []
+winner = pop.statistics.best_genome()
+ 
+ 
+ 
+                    
+#r = season('./seasons/2011-12/E0.csv')
+#r.read_season()
+#g = network(r)
+#g.make_graph_to()
+#print g.G
+
 
